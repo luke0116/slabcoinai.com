@@ -1,0 +1,509 @@
+import { useState, useRef } from "react";
+
+const API_URL = "https://api.anthropic.com/v1/messages";
+
+const SYSTEM_PROMPT = `あなたはアンティークコイン（古銭・貨幣）の世界トップレベルの専門家です。
+特にNGC Ancientsグレーディングシステムの深い知識を持ち、スラブ画像を分析してWeb検索で最新相場を調査し、詳細なレポートをJSON形式で返します。
+
+## NGC Ancients グレーディング体系（必ず参照）
+
+### 摩耗グレード（形容詞グレード）と価格への影響
+NGC Ancientsは数値ではなく形容詞グレードを使用する:
+
+| グレード | 略称 | 状態 | 市場価値への影響 |
+|---|---|---|---|
+| Mint State | MS | 流通摩耗なし | 最高価格帯（稀少） |
+| About Uncirculated | AU | 最高部に微かな摩耗 | 高価格帯 |
+| Extremely Fine | EF/XF | 高部のみ軽微な摩耗、全詳細鮮明 | 高価格帯（最も人気） |
+| Near EF / aEF / VF+ | aEF | EFに近いVF上位 | 中高価格帯 |
+| Very Fine | VF | 細部に摩耗あり、肖像明確、大半の銘文判読可 | 中価格帯（最多流通グレード） |
+| Near VF / aVF / F+ | aVF | VFに近いFine上位 | 中価格帯 |
+| Fine | F | 主要デザイン残存、細部消耗、肖像判別可 | 中低価格帯 |
+| Very Good | VG | 主要輪郭のみ残存 | 低価格帯 |
+| Good | G | わずかな特徴のみ | 低価格帯（歴史的価値のみ） |
+| About Good / Fair | AG/Fr | ほぼ判別不能 | 最低価格帯 |
+| Poor | P | 特徴なし | コレクション対象外 |
+
+### Strike（打刻品質）スコア 1〜5
+- **5/5**: 最高品質（センタリング完璧、打刻強く均一、ダイ状態良好）→ 大幅なプレミアム
+- **4/5**: 優良（軽微な偏心または弱点あり）→ プレミアム
+- **3/5**: 標準的
+- **2/5**: 弱め（偏心・打刻弱・ダイ摩耗）→ ディスカウント
+- **1/5**: 不良 → 大幅ディスカウント
+
+### Surface（表面状態）スコア 1〜5
+- **5/5**: 最高品質（コリネーション・パティナ最良）→ 大幅なプレミアム
+- **4/5**: 軽微なバンカーズマーク・スクラッチのみ
+- **3/5**: 標準的な表面状態
+- **2/5**: コリネーション・クリーニング痕・グラフィトあり → ディスカウント
+- **1/5**: 腐食・重大な損傷 → 大幅ディスカウント
+
+### 特別デジグネーション（価格に大きく影響）
+- **Fine Style (FS)**: ダイの芸術性が特に優れている → 同グレード比20〜50%プレミアム
+- **★ Star**: 卓越したアイアピール → プレミアム
+- **Net Grade**: Strike/Surfaceを統合した総合グレード
+
+### グレード別価格差の重要性
+同コイン・同タイプでも:
+- EF 5/5 Strike, 5/5 Surface, Fine Style: VF 3/3 の 3〜10倍の価格になる場合がある
+- Negative Comment（Cleaned/Tooled/Smoothed）: 同グレード正常品の 30〜70% 下落
+- Strike/Surface スコアの各1ポイント差: 通常 10〜30% の価格差
+
+## 手順
+1. 画像からスラブラベルを読み取り、全情報を抽出する
+2. web_searchツールで以下を検索する（グレード・Strike・Surface別に価格を抽出すること）:
+   - site:sixbid.com [コイン名] [年号] [グレード]
+   - site:numisbids.com [コイン名] [年号] [グレード]
+   - [コイン名] [年号] [EF/VF/MS等] auction results 2024 2025
+   - [コイン名] strike surface grade price comparison
+3. 取得した情報をもとに以下のJSONのみを返す（コードブロック不要、前置き不要）:
+
+{
+  "coinInfo": {
+    "name": "正式コイン名（英語）",
+    "nameJa": "コイン名（日本語）",
+    "year": "年号",
+    "mint": "造幣局・ミントマーク",
+    "grade": "グレード（NGC Ancients形容詞グレード: EF/VF/MS等）",
+    "strikeScore": "Strikeスコア（例: 4/5）",
+    "surfaceScore": "Surfaceスコア（例: 3/5）",
+    "certNumber": "認証番号",
+    "gradingCompany": "鑑定会社（PCGS/NGC/ANACS等）",
+    "denomination": "額面",
+    "country": "発行国",
+    "metal": "素材（金/銀/銅等）",
+    "negativeComment": "ネガティブコメント（Cleaned, Tooled, Smoothed等。なければ「なし」）",
+    "strikeSurface": "Strike / Surface 詳細（例: Strike 4/5 - Strong centering, Surface 3/5 - Minor banker's marks）",
+    "fineStyle": "Fine Style指定あり/なし",
+    "starDesignation": "Star(★)指定あり/なし"
+  },
+  "marketData": {
+    "priceRangeUSD": "本コインのグレード・Strike・Surface込みの推定価格レンジ USD",
+    "priceRangeJPY": "推定価格レンジ 円（1USD=150円換算）",
+    "gradePriceComparison": [
+      {"grade": "グレード名（例: VF）", "strikeScore": "Strike score（例: 3/5）", "surfaceScore": "Surface score（例: 3/5）", "priceUSD": "価格レンジ USD", "note": "備考"},
+      {"grade": "EF", "strikeScore": "4/5", "surfaceScore": "4/5", "priceUSD": "価格レンジ USD", "note": "備考"}
+    ],
+    "recentAuctions": [
+      {"date": "YYYY-MM", "price": "落札価格", "currency": "USD/EUR", "grade": "グレード+Strike+Surface", "source": "Sixbid or NumisBids", "url": "URL（あれば）"}
+    ],
+    "trend": "上昇 or 安定 or 下降",
+    "trendNote": "トレンドの詳細説明（1〜2文）",
+    "sixbidResults": "Sixbidでの検索結果サマリー",
+    "numisbidsResults": "NumisBidsでの検索結果サマリー"
+  },
+  "report": {
+    "summary": "コインの歴史的・収集的概要（3〜4文、日本語）",
+    "gradeImpactNote": "このコインのグレード・Strike・Surfaceスコアが価格に与える影響の解説（日本語）",
+    "rarity": "高 or 中 or 低",
+    "rarityNote": "希少性の詳細（日本語）",
+    "populationData": "同グレードの鑑定枚数（PCGSポップレポート等があれば）",
+    "investmentNote": "投資・収集上の注意点とアドバイス（日本語）",
+    "sources": ["参照URL1", "参照URL2"]
+  }
+}`;
+
+// JSON抽出 → 失敗したらClaudeに修復させる
+async function extractJSON(text) {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error("JSONが見つかりませんでした。鮮明なスラブ表面画像をご使用ください。");
+  const candidate = text.slice(start, end + 1);
+
+  // まず直接パース
+  try { return JSON.parse(candidate); } catch (_) {}
+
+  // trailing comma除去して再パース
+  try { return JSON.parse(candidate.replace(/,(\s*[}\]])/g, '$1')); } catch (_) {}
+
+  // それでも失敗 → Claudeに修復させる
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      messages: [{
+        role: "user",
+        content: `以下のテキストから有効なJSONオブジェクトだけを抽出・修復して返してください。\nコードブロック・説明文・前置き一切不要。JSONのみ出力してください。\n\n${candidate.slice(0, 3000)}`
+      }]
+    })
+  });
+  if (!res.ok) throw new Error("JSON修復リクエストに失敗しました。");
+  const data = await res.json();
+  const repaired = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const s2 = repaired.indexOf('{');
+  const e2 = repaired.lastIndexOf('}');
+  if (s2 === -1 || e2 === -1) throw new Error("レポートの生成に失敗しました。再度お試しください。");
+  return JSON.parse(repaired.slice(s2, e2 + 1));
+}
+
+// マルチターンでツール使用を処理する関数
+async function callWithTools(messages) {
+  const tools = [{ type: "web_search_20250305", name: "web_search" }];
+  let currentMessages = [...messages];
+
+  for (let i = 0; i < 8; i++) {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        system: SYSTEM_PROMPT,
+        tools,
+        messages: currentMessages,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`API Error ${res.status}: ${errText.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+
+    // エラーチェック
+    if (data.error) throw new Error(data.error.message);
+
+    // stop_reason が end_turn ならテキストを返す
+    if (data.stop_reason === "end_turn") {
+      const text = (data.content || [])
+        .filter(b => b.type === "text")
+        .map(b => b.text)
+        .join("");
+      return text;
+    }
+
+    // tool_use が含まれる場合 → tool_result を組み立てて次のターンへ
+    if (data.stop_reason === "tool_use") {
+      // アシスタントのメッセージを追加
+      currentMessages.push({ role: "assistant", content: data.content });
+
+      // tool_result を収集
+      const toolResults = (data.content || [])
+        .filter(b => b.type === "tool_use")
+        .map(b => ({
+          type: "tool_result",
+          tool_use_id: b.id,
+          content: b.type === "web_search" ? (b.content || "検索結果なし") : JSON.stringify(b.input),
+        }));
+
+      if (toolResults.length === 0) break;
+      currentMessages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    // その他の stop_reason（max_tokens等）
+    const fallbackText = (data.content || [])
+      .filter(b => b.type === "text")
+      .map(b => b.text)
+      .join("");
+    if (fallbackText) return fallbackText;
+    break;
+  }
+
+  throw new Error("レポートの生成に失敗しました。再度お試しください。");
+}
+
+export default function App() {
+  const [image, setImage] = useState(null);
+  const [imgBase64, setImgBase64] = useState(null);
+  const [imgType, setImgType] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [loadStep, setLoadStep] = useState(0);
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState(null);
+  const fileRef = useRef();
+  const dropRef = useRef();
+
+  const STEPS = ["スラブ画像を解析中…", "Sixbid を検索中…", "NumisBids を検索中…", "レポートを生成中…"];
+
+  const handleFile = (file) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImage(e.target.result);
+      setImgBase64(e.target.result.split(",")[1]);
+      setImgType(file.type);
+      setReport(null);
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    dropRef.current.style.borderColor = "#d1d1d1";
+    handleFile(e.dataTransfer.files[0]);
+  };
+
+  const analyze = async () => {
+    if (!imgBase64) return;
+    setLoading(true);
+    setError(null);
+    setReport(null);
+    setLoadStep(0);
+
+    const stepTimer = setInterval(() => {
+      setLoadStep(s => Math.min(s + 1, STEPS.length - 1));
+    }, 4000);
+
+    try {
+      const initialMessages = [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: imgType, data: imgBase64 } },
+          { type: "text", text: "このスラブ画像を解析し、sixbid.com と numisbids.com で最新オークション相場を検索して、JSONレポートを生成してください。" }
+        ]
+      }];
+
+      const text = await callWithTools(initialMessages);
+      const parsed = await extractJSON(text);
+      setReport(parsed);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      clearInterval(stepTimer);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: "'Helvetica Neue', Arial, sans-serif", minHeight: "100vh", background: "#ffffff", color: "#1a1a1a" }}>
+      <header style={{ borderBottom: "1px solid #ebebeb", padding: "18px 32px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🪙</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 17, letterSpacing: "-0.3px" }}>Slab Coin AI</div>
+            <div style={{ fontSize: 11, color: "#999", marginTop: 1 }}>Powered by Claude AI × Sixbid × NumisBids</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {["PCGS", "NGC", "ANACS"].map(g => (
+            <span key={g} style={{ fontSize: 10, fontWeight: 600, padding: "3px 7px", border: "1px solid #e0e0e0", borderRadius: 4, color: "#888" }}>{g}</span>
+          ))}
+        </div>
+      </header>
+
+      <main style={{ maxWidth: 780, margin: "0 auto", padding: "40px 24px" }}>
+        <div
+          ref={dropRef}
+          onClick={() => !loading && fileRef.current.click()}
+          onDragOver={e => { e.preventDefault(); dropRef.current.style.borderColor = "#999"; }}
+          onDragLeave={() => dropRef.current.style.borderColor = "#d1d1d1"}
+          onDrop={handleDrop}
+          style={{
+            border: "2px dashed #d1d1d1", borderRadius: 14, padding: image ? "20px" : "56px 24px",
+            textAlign: "center", cursor: loading ? "not-allowed" : "pointer",
+            background: "#fafafa", transition: "border-color 0.2s",
+          }}
+        >
+          {image ? (
+            <div style={{ position: "relative", display: "inline-block" }}>
+              <img src={image} alt="slab" style={{ maxHeight: 300, maxWidth: "100%", borderRadius: 10, objectFit: "contain", boxShadow: "0 2px 16px rgba(0,0,0,0.10)" }} />
+              {!loading && (
+                <button onClick={e => { e.stopPropagation(); setImage(null); setImgBase64(null); setReport(null); setError(null); }}
+                  style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.55)", color: "#fff", border: "none", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", fontSize: 13, lineHeight: "26px" }}>✕</button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 44, marginBottom: 14 }}>📷</div>
+              <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6 }}>スラブ表面の画像をアップロード</div>
+              <div style={{ fontSize: 13, color: "#999" }}>クリックして選択 / ドラッグ＆ドロップ</div>
+              <div style={{ fontSize: 11, color: "#ccc", marginTop: 8 }}>JPG · PNG · WEBP 対応</div>
+            </>
+          )}
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" onChange={e => handleFile(e.target.files[0])} style={{ display: "none" }} />
+
+        {image && !loading && (
+          <button onClick={analyze}
+            style={{ marginTop: 16, width: "100%", padding: "15px", background: "#1a1a1a", color: "#fff", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: "pointer", letterSpacing: "0.3px" }}>
+            🔍　コインを解析してレポートを生成
+          </button>
+        )}
+
+        {loading && (
+          <div style={{ marginTop: 20, padding: "24px 20px", border: "1px solid #e8e8e8", borderRadius: 10, background: "#fafafa" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+              <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2.5px solid #1a1a1a", borderTopColor: "transparent", animation: "spin 0.8s linear infinite" }} />
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{STEPS[loadStep]}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {STEPS.map((_, i) => (
+                <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= loadStep ? "#1a1a1a" : "#e0e0e0", transition: "background 0.4s" }} />
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+              {STEPS.map((s, i) => (
+                <div key={i} style={{ flex: 1, fontSize: 10, color: i <= loadStep ? "#555" : "#bbb", textAlign: "center", lineHeight: 1.3 }}>{s.replace("…", "")}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 20, padding: "14px 16px", background: "#fff8f8", border: "1px solid #fad4d4", borderRadius: 8, color: "#c00", fontSize: 13 }}>
+            ⚠️ {error}
+          </div>
+        )}
+
+        {report && <ReportView data={report} />}
+      </main>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+function ReportView({ data }) {
+  const { coinInfo: c, marketData: m, report: r } = data;
+  const trendClr = m?.trend === "上昇" ? "#16a34a" : m?.trend === "下降" ? "#dc2626" : "#2563eb";
+  const trendIcon = m?.trend === "上昇" ? "↑" : m?.trend === "下降" ? "↓" : "→";
+  const rarityClr = r?.rarity === "高" ? "#dc2626" : r?.rarity === "中" ? "#d97706" : "#16a34a";
+
+  return (
+    <div style={{ marginTop: 36 }}>
+      <div style={{ borderTop: "2px solid #1a1a1a", borderBottom: "1px solid #e5e5e5", padding: "16px 0", marginBottom: 28, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 5 }}>鑑定レポート / Slab Coin AI Report</div>
+          <div style={{ fontWeight: 700, fontSize: 24, letterSpacing: "-0.5px" }}>{c?.nameJa || c?.name || "不明"}</div>
+          {c?.name && c?.nameJa && <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{c.name}</div>}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "#bbb" }}>{new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })}</div>
+          {c?.gradingCompany && (
+            <div style={{ marginTop: 4, display: "inline-block", background: "#1a1a1a", color: "#fff", fontSize: 12, fontWeight: 700, padding: "3px 10px", borderRadius: 4 }}>{c.gradingCompany}</div>
+          )}
+        </div>
+      </div>
+
+      <Section label="コイン情報">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 }}>
+          {[["発行国", c?.country], ["年号", c?.year], ["額面", c?.denomination], ["ミント", c?.mint], ["素材", c?.metal], ["グレード", c?.grade, true], ["Strike", c?.strikeScore, true], ["Surface", c?.surfaceScore, true], ["認証番号", c?.certNumber], ["鑑定会社", c?.gradingCompany], ["Fine Style", c?.fineStyle], ["Star ★", c?.starDesignation], ["Negative Comment", c?.negativeComment], ["Strike / Surface 詳細", c?.strikeSurface]].map(([l, v, bold]) => (
+            <InfoCell key={l} label={l} value={v} bold={bold} />
+          ))}
+        </div>
+      </Section>
+
+      <Section label="市場価格・相場">
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <BigStat label="推定価格（USD）" value={m?.priceRangeUSD || "—"} />
+          <BigStat label="推定価格（円）" value={m?.priceRangeJPY || "—"} />
+          <BigStat label="相場トレンド" value={m?.trend ? `${trendIcon} ${m.trend}` : "—"} color={trendClr} />
+          <BigStat label="希少性" value={r?.rarity || "—"} color={rarityClr} />
+        </div>
+        {m?.trendNote && <Note icon="📈" text={m.trendNote} />}
+        {r?.gradeImpactNote && <Note icon="🎯" text={`【グレード・Strike・Surface の価格影響】${r.gradeImpactNote}`} />}
+        {m?.sixbidResults && <Note icon="🔗" text={`Sixbid: ${m.sixbidResults}`} />}
+        {m?.numisbidsResults && <Note icon="🔗" text={`NumisBids: ${m.numisbidsResults}`} />}
+
+        {m?.gradePriceComparison?.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>グレード別価格比較</div>
+            <div style={{ border: "1px solid #e8e8e8", borderRadius: 8, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead style={{ background: "#f7f7f7" }}>
+                  <tr>
+                    {["グレード", "Strike", "Surface", "推定価格 USD", "備考"].map(h => (
+                      <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.gradePriceComparison.map((g, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #f0f0f0", background: i % 2 ? "#fafafa" : "#fff" }}>
+                      <td style={{ padding: "9px 12px", fontWeight: 700 }}>{g.grade || "—"}</td>
+                      <td style={{ padding: "9px 12px", color: "#2563eb", fontWeight: 600 }}>{g.strikeScore || "—"}</td>
+                      <td style={{ padding: "9px 12px", color: "#16a34a", fontWeight: 600 }}>{g.surfaceScore || "—"}</td>
+                      <td style={{ padding: "9px 12px", fontWeight: 700 }}>{g.priceUSD || "—"}</td>
+                      <td style={{ padding: "9px 12px", color: "#888", fontSize: 12 }}>{g.note || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {m?.recentAuctions?.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>直近オークション落札結果</div>
+            <div style={{ border: "1px solid #e8e8e8", borderRadius: 8, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead style={{ background: "#f7f7f7" }}>
+                  <tr>
+                    {["日付", "グレード", "落札価格", "出典"].map(h => (
+                      <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#666", fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.recentAuctions.map((a, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #f0f0f0", background: i % 2 ? "#fafafa" : "#fff" }}>
+                      <td style={{ padding: "9px 12px", color: "#888" }}>{a.date || "—"}</td>
+                      <td style={{ padding: "9px 12px" }}>{a.grade || "—"}</td>
+                      <td style={{ padding: "9px 12px", fontWeight: 700 }}>{a.price} {a.currency || ""}</td>
+                      <td style={{ padding: "9px 12px" }}>
+                        {a.url ? <a href={a.url} target="_blank" rel="noreferrer" style={{ color: "#555", textDecoration: "none" }}>🔗 {a.source}</a> : <span style={{ color: "#888" }}>{a.source || "—"}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section label="レポートサマリー">
+        {r?.summary && <p style={{ fontSize: 14, lineHeight: 1.85, color: "#333", marginBottom: 14 }}>{r.summary}</p>}
+        {r?.rarityNote && <Note icon="💎" text={`【希少性】${r.rarityNote}`} />}
+        {r?.populationData && <Note icon="📊" text={`【ポップレポート】${r.populationData}`} />}
+        {r?.investmentNote && <Note icon="📌" text={`【収集・投資メモ】${r.investmentNote}`} />}
+      </Section>
+
+      {r?.sources?.filter(Boolean).length > 0 && (
+        <div style={{ borderTop: "1px solid #ebebeb", paddingTop: 16, marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: "#bbb", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>参照データソース</div>
+          {r.sources.filter(Boolean).map((s, i) => (
+            <a key={i} href={s} target="_blank" rel="noreferrer"
+              style={{ display: "block", fontSize: 12, color: "#888", marginBottom: 3, textDecoration: "none", wordBreak: "break-all" }}>
+              🔗 {s}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const Section = ({ label, children }) => (
+  <div style={{ marginBottom: 28 }}>
+    <div style={{ fontSize: 10, fontWeight: 700, color: "#aaa", textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 12, paddingBottom: 6, borderBottom: "1px solid #f0f0f0" }}>{label}</div>
+    {children}
+  </div>
+);
+
+const InfoCell = ({ label, value, bold }) => (
+  <div style={{ padding: "10px 12px", background: "#f8f8f8", borderRadius: 7 }}>
+    <div style={{ fontSize: 10, color: "#aaa", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+    <div style={{ fontWeight: bold ? 700 : 500, fontSize: 13, color: bold ? "#1a1a1a" : "#333" }}>{value || "—"}</div>
+  </div>
+);
+
+const BigStat = ({ label, value, color }) => (
+  <div style={{ flex: 1, minWidth: 130, padding: "14px 16px", border: "1px solid #e8e8e8", borderRadius: 9, textAlign: "center" }}>
+    <div style={{ fontSize: 10, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+    <div style={{ fontWeight: 700, fontSize: 17, color: color || "#1a1a1a", letterSpacing: "-0.3px" }}>{value}</div>
+  </div>
+);
+
+const Note = ({ icon, text }) => (
+  <div style={{ display: "flex", gap: 10, marginBottom: 8, padding: "10px 14px", background: "#f8f8f8", borderRadius: 7, fontSize: 13, color: "#444", lineHeight: 1.7 }}>
+    <span style={{ flexShrink: 0 }}>{icon}</span>
+    <span>{text}</span>
+  </div>
+);
